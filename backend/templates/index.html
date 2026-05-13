@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Musikat - Add Songs to Navidrome</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}?v=playlist-summary-1">
     {# Avoid href="//" when root_path is "/"; keep single app prefix for API URLs #}
     {% set _rp = (request.scope.get('root_path') or '').strip() %}
     {% if not _rp or _rp == '/' %}
@@ -43,6 +43,7 @@
                     <div class="search-type-toggle">
                         <button id="searchTracks" class="toggle-btn active">Tracks</button>
                         <button id="searchAlbums" class="toggle-btn">Albums</button>
+                        <button id="searchImport" class="toggle-btn">Import Playlist</button>
                     </div>
                 </div>
             </div>
@@ -102,6 +103,56 @@
                 <button id="reverseDownloadBtn" class="btn btn-primary">Download from YouTube + Apply Metadata</button>
             </div>
         </div>
+
+        <section id="playlistImportSection" class="playlist-import-section hidden" aria-labelledby="playlistImportTitle">
+            <div class="playlist-import-header">
+                <h2 id="playlistImportTitle">Import Playlist</h2>
+                <p>Bring in tracks from playlist files or music services, preview matches, then queue the ones you want.</p>
+            </div>
+
+            <div class="playlist-import-grid">
+                <div class="playlist-source-panel">
+                    <label for="playlistSource">Source</label>
+                    <select id="playlistSource" class="download-select">
+                        <option value="csv">CSV upload</option>
+                        <option value="m3u">M3U / M3U8 upload</option>
+                        <option value="spotify">Spotify playlist / album URL</option>
+                        <option value="deezer">Deezer playlist URL</option>
+                        <option value="lastfm">Last.fm</option>
+                        <option value="listenbrainz">ListenBrainz</option>
+                    </select>
+
+                    <div id="playlistFileControls" class="playlist-source-controls">
+                        <input id="playlistFile" type="file" accept=".csv" />
+                    </div>
+
+                    <div id="playlistUrlControls" class="playlist-source-controls hidden">
+                        <input id="playlistUrl" type="url" placeholder="Playlist URL" />
+                    </div>
+
+                    <div id="playlistUserControls" class="playlist-source-controls hidden">
+                        <input id="playlistUsername" type="text" placeholder="Username" />
+                        <button id="playlistLoadUserOptionsBtn" class="btn btn-secondary hidden" type="button">Load options</button>
+                        <select id="playlistImportType" class="download-select"></select>
+                    </div>
+
+                    <div class="playlist-actions">
+                        <button id="playlistPreviewBtn" class="btn btn-primary" type="button">Preview</button>
+                        <button id="playlistMatchBtn" class="btn btn-secondary" type="button" disabled>Match tracks</button>
+                        <button id="playlistDeselectUnmatchedBtn" class="btn btn-secondary" type="button" disabled>Deselect unmatched</button>
+                        <button id="playlistQueueBtn" class="btn btn-download" type="button" disabled>Import selected to queue</button>
+                        <button id="playlistDownloadBtn" class="btn btn-download" type="button" disabled>Download selected</button>
+                        <button id="playlistBulkDownloadBtn" class="btn btn-primary" type="button" disabled>Bulk download matched</button>
+                        <button id="playlistClearBtn" class="btn btn-secondary" type="button" disabled>Clear import</button>
+                    </div>
+                </div>
+
+                <div id="playlistSummary" class="playlist-summary hidden"></div>
+            </div>
+
+            <div id="playlistImportError" class="error hidden"></div>
+            <div id="playlistPreview" class="playlist-preview hidden"></div>
+        </section>
         </div>
 
         <div id="downloadStatus" class="download-status hidden">
@@ -188,7 +239,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', path='app.js') }}"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=playlist-summary-1"></script>
 </body>
 </html>
-

@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from urllib.parse import quote, unquote
@@ -66,6 +66,19 @@ def get_metadata_service(provider: str):
     raise HTTPException(status_code=400, detail="Unknown metadata provider")
 
 
+def resolve_playlist_match_provider(raw: Optional[str]) -> str:
+    return resolve_metadata_provider(raw or config.DEFAULT_PLAYLIST_MATCH_PROVIDER)
+
+
+def maybe_match_playlist(payload: Dict, provider: Optional[str], should_match: bool) -> Dict:
+    payload["match_provider"] = resolve_playlist_match_provider(provider)
+    if not should_match:
+        return payload
+    svc = get_metadata_service(payload["match_provider"])
+    payload["tracks"] = match_tracks(payload.get("tracks") or [], svc)
+    return payload
+
+
 def resolve_navidrome_library_path_optional(raw: Optional[str]) -> str:
     """Return a configured Navidrome music root. Defaults to the first library."""
     if not raw or not str(raw).strip():
@@ -98,9 +111,36 @@ def get_system_downloads_folder():
     return str(downloads)
 
 
+def move_to_system_downloads(file_path: str) -> str:
+    """Move a completed local temp download to the user's Downloads folder."""
+    downloads = Path(get_system_downloads_folder())
+    src = Path(file_path)
+    target = downloads / src.name
+    if target.exists():
+        stem = target.stem
+        suffix = target.suffix
+        i = 1
+        while True:
+            candidate = downloads / f"{stem} ({i}){suffix}"
+            if not candidate.exists():
+                target = candidate
+                break
+            i += 1
+    shutil.move(str(src), str(target))
+    return str(target)
+
+
 from services.youtube import YouTubeService
 from services.metadata import MetadataService
 from services.navidrome import NavidromeService
+from services.csv_importer import parse_csv_playlist
+from services.m3u_importer import parse_m3u_playlist
+from services.playlist_importer import match_tracks, playlist_payload
+from services.spotify_playlist import fetch_spotify_playlist
+from services.spotify_web_playlist import fetch_spotify_web_playlist
+from services.deezer_playlist import fetch_deezer_playlist
+from services.lastfm_service import fetch_lastfm_tracks
+from services.listenbrainz_service import fetch_listenbrainz_playlists, fetch_listenbrainz_tracks
 from utils.file_handler import get_download_path
 from utils.navidrome_library_sync import start_navidrome_library_sync_background
 
@@ -223,6 +263,41 @@ class ReverseDownloadRequest(BaseModel):
     spotify_track_id: Optional[str] = None  # Catalog track id (Spotify or Deezer depending on provider)
     metadata: Optional[Dict] = None
     provider: Optional[str] = None  # "deezer" | "spotify"
+    navidrome_library: Optional[str] = None
+
+
+class PlaylistUrlImportRequest(BaseModel):
+    url: str
+    provider: Optional[str] = None
+    match: Optional[bool] = False
+
+
+class LastfmImportRequest(BaseModel):
+    username: str
+    import_type: str = "loved"
+    provider: Optional[str] = None
+    match: Optional[bool] = False
+
+
+class ListenBrainzImportRequest(BaseModel):
+    username: str
+    import_type: str = "recent"
+    provider: Optional[str] = None
+    match: Optional[bool] = False
+
+
+class PlaylistMatchRequest(BaseModel):
+    tracks: List[Dict]
+    provider: Optional[str] = None
+
+
+class PlaylistQueueRequest(BaseModel):
+    tracks: List[Dict]
+    location: Optional[str] = "local"
+    format: Optional[str] = None
+    quality: Optional[str] = None
+    provider: Optional[str] = None
+    max_retries: Optional[int] = 0
     navidrome_library: Optional[str] = None
 
 
@@ -422,17 +497,13 @@ def download_and_process(
                            progress=0
                            )
         else:
-            # For local downloads, provide download URL for browser to handle
-            # The file is ready, browser will download it to user's Downloads folder
-            filename = os.path.basename(download_result['file_path'])
-            # URL encode the filename to handle special characters (use query parameter)
-            encoded_filename = quote(filename, safe='')
-            download_url = f"api/download/file/{track_id}?filename={encoded_filename}"
+            # For local downloads, move the completed file into the server user's Downloads folder.
+            # This is more reliable than relying on browser blob downloads inside embedded browsers.
+            final_path = move_to_system_downloads(download_result['file_path'])
             upsert_job(track_id,
                        status="completed",
-                       message="Track ready for download",
-                       file_path=download_result['file_path'],
-                       download_url=download_url,  # URL to trigger browser download
+                       message="Track saved to your Downloads folder",
+                       file_path=final_path,
                        stage="completed",
                        progress=100
                        )
@@ -472,6 +543,225 @@ async def metadata_providers():
                 "configured": spotify_service is not None,
             },
         ],
+    }
+
+
+@app.post("/api/playlists/import/csv")
+async def import_playlist_csv(
+    file: UploadFile = File(...),
+    provider: Optional[str] = Query(None),
+    match: bool = Query(False),
+):
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Upload a .csv file")
+    try:
+        tracks = parse_csv_playlist(await file.read())
+        if not tracks:
+            raise HTTPException(status_code=400, detail="CSV playlist did not contain any tracks")
+        payload = playlist_payload(file.filename or "CSV playlist", "csv", tracks, config.PLAYLIST_IMPORT_LIMIT)
+        return maybe_match_playlist(payload, provider, match)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse CSV playlist: {str(e)}")
+
+
+@app.post("/api/playlists/import/m3u")
+async def import_playlist_m3u(
+    file: UploadFile = File(...),
+    provider: Optional[str] = Query(None),
+    match: bool = Query(False),
+):
+    lower = (file.filename or "").lower()
+    if not (lower.endswith(".m3u") or lower.endswith(".m3u8")):
+        raise HTTPException(status_code=400, detail="Upload a .m3u or .m3u8 file")
+    try:
+        tracks = parse_m3u_playlist(await file.read())
+        if not tracks:
+            raise HTTPException(status_code=400, detail="M3U playlist did not contain any tracks")
+        payload = playlist_payload(file.filename or "M3U playlist", "m3u", tracks, config.PLAYLIST_IMPORT_LIMIT)
+        return maybe_match_playlist(payload, provider, match)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse M3U playlist: {str(e)}")
+
+
+@app.post("/api/playlists/import/spotify")
+async def import_playlist_spotify(request: PlaylistUrlImportRequest):
+    errors = []
+    try:
+        if spotify_service is None:
+            raise RuntimeError("Spotify API credentials are not configured")
+        payload = fetch_spotify_playlist(spotify_service, request.url, config.PLAYLIST_IMPORT_LIMIT)
+        if not payload["tracks"]:
+            raise HTTPException(status_code=400, detail="Spotify playlist is empty or private")
+        return maybe_match_playlist(payload, request.provider, bool(request.match))
+    except HTTPException:
+        raise
+    except Exception as e:
+        errors.append(f"API: {str(e)}")
+
+    try:
+        payload = fetch_spotify_web_playlist(request.url, config.PLAYLIST_IMPORT_LIMIT)
+        if not payload["tracks"]:
+            raise HTTPException(status_code=400, detail="Spotify web playlist did not expose any tracks")
+        return maybe_match_playlist(payload, request.provider, bool(request.match))
+    except HTTPException:
+        raise
+    except Exception as e:
+        errors.append(f"web: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Could not import Spotify playlist ({'; '.join(errors)})")
+
+
+@app.post("/api/playlists/import/deezer")
+async def import_playlist_deezer(request: PlaylistUrlImportRequest):
+    try:
+        payload = fetch_deezer_playlist(request.url, config.PLAYLIST_IMPORT_LIMIT)
+        if not payload["tracks"]:
+            raise HTTPException(status_code=400, detail="Deezer playlist is empty or unavailable")
+        return maybe_match_playlist(payload, request.provider, bool(request.match))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not import Deezer playlist: {str(e)}")
+
+
+@app.post("/api/playlists/import/lastfm")
+async def import_playlist_lastfm(request: LastfmImportRequest):
+    if not request.username.strip():
+        raise HTTPException(status_code=400, detail="Last.fm username is required")
+    try:
+        payload = fetch_lastfm_tracks(
+            config.LASTFM_API_KEY,
+            request.username.strip(),
+            request.import_type,
+            config.PLAYLIST_IMPORT_LIMIT,
+        )
+        if not payload["tracks"]:
+            raise HTTPException(status_code=400, detail="Last.fm returned no tracks")
+        return maybe_match_playlist(payload, request.provider, bool(request.match))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not import Last.fm tracks: {str(e)}")
+
+
+@app.post("/api/playlists/import/listenbrainz")
+async def import_playlist_listenbrainz(request: ListenBrainzImportRequest):
+    if not request.username.strip():
+        raise HTTPException(status_code=400, detail="ListenBrainz username is required")
+    try:
+        payload = fetch_listenbrainz_tracks(
+            request.username.strip(),
+            request.import_type,
+            config.PLAYLIST_IMPORT_LIMIT,
+        )
+        if not payload["tracks"]:
+            raise HTTPException(status_code=400, detail="ListenBrainz returned no tracks")
+        return maybe_match_playlist(payload, request.provider, bool(request.match))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not import ListenBrainz tracks: {str(e)}")
+
+
+@app.get("/api/playlists/import/listenbrainz/options")
+async def listenbrainz_import_options(username: str = Query(...)):
+    user = username.strip()
+    if not user:
+        raise HTTPException(status_code=400, detail="ListenBrainz username is required")
+    try:
+        playlists = fetch_listenbrainz_playlists(user, config.PLAYLIST_IMPORT_LIMIT)
+        return {
+            "options": [
+                {"value": "recent", "label": "Recent listens"},
+                {"value": "loved", "label": "Loved / feedback tracks"},
+                *[
+                    {
+                        "value": f"playlist:{playlist['id']}",
+                        "label": f"Playlist: {playlist['title']}",
+                        "playlist_id": playlist["id"],
+                        "track_count": playlist.get("track_count", 0),
+                    }
+                    for playlist in playlists
+                ],
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not fetch ListenBrainz options: {str(e)}")
+
+
+@app.post("/api/playlists/match")
+async def match_playlist_tracks(request: PlaylistMatchRequest):
+    provider = resolve_playlist_match_provider(request.provider)
+    svc = get_metadata_service(provider)
+    tracks = (request.tracks or [])[: config.PLAYLIST_IMPORT_LIMIT]
+    return {
+        "match_provider": provider,
+        "tracks": match_tracks(tracks, svc),
+    }
+
+
+@app.post("/api/playlists/queue")
+async def queue_playlist_tracks(request: PlaylistQueueRequest, background_tasks: BackgroundTasks):
+    provider = resolve_playlist_match_provider(request.provider)
+    get_metadata_service(provider)
+    location = request.location if request.location in ["local", "navidrome"] else "local"
+    output_format = request.format or config.OUTPUT_FORMAT
+    navidrome_path: Optional[str] = None
+    if location == "navidrome":
+        navidrome_path = resolve_navidrome_library_path_optional(request.navidrome_library)
+
+    queued = []
+    skipped = []
+    for item in (request.tracks or [])[: config.PLAYLIST_IMPORT_LIMIT]:
+        matched = item.get("matched_track") or item
+        track_id = str(matched.get("id") or "")
+        if not track_id:
+            skipped.append({"track": item, "reason": "No matched track"})
+            continue
+        dup = get_duplicate_download_reason(
+            track_id,
+            provider,
+            location,
+            output_format,
+            track_info=matched,
+            navidrome_library_path=navidrome_path,
+        )
+        if dup:
+            skipped.append({"track": item, "reason": dup})
+            continue
+        upsert_job(
+            track_id,
+            status="queued",
+            message="Playlist import queued",
+            progress=0,
+            stage="queued",
+            payload={"provider": provider, "record_track_id": track_id, "playlist_import": True},
+        )
+        background_tasks.add_task(
+            download_and_process,
+            track_id,
+            location,
+            None,
+            output_format,
+            request.quality,
+            provider,
+            _clamp_download_retries(request.max_retries),
+            navidrome_path,
+        )
+        queued.append(matched)
+
+    if not queued and request.tracks:
+        raise HTTPException(status_code=400, detail="No matched playlist tracks could be queued")
+    return {
+        "status": "queued",
+        "queued_count": len(queued),
+        "skipped_count": len(skipped),
+        "queued_track_ids": [track["id"] for track in queued],
+        "queued_tracks": queued,
+        "skipped": skipped,
     }
 
 
@@ -735,14 +1025,11 @@ def reverse_download_and_process(
             except Exception as e:
                 upsert_job(job_id, status="error", message=f"Failed to copy to Navidrome: {str(e)}", progress=0)
         else:
-            filename = os.path.basename(download_result['file_path'])
-            encoded_filename = quote(filename, safe='')
-            download_url = f"api/download/file/{job_id}?filename={encoded_filename}"
+            final_path = move_to_system_downloads(download_result['file_path'])
             upsert_job(job_id,
                        status="completed",
-                       message="Track ready for download",
-                       file_path=download_result['file_path'],
-                       download_url=download_url,
+                       message="Track saved to your Downloads folder",
+                       file_path=final_path,
                        stage="completed",
                        progress=100,
                        )
@@ -1177,4 +1464,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host=config.API_HOST, port=config.API_PORT)
-

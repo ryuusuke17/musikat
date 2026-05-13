@@ -1023,3 +1023,220 @@ header h1 {
     margin: 0 0 10px;
 }
 
+/* Playlist import */
+.playlist-import-section {
+    margin: 34px 0 10px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border-color);
+}
+
+.playlist-import-header {
+    margin-bottom: 18px;
+}
+
+.playlist-import-header h2 {
+    margin-bottom: 6px;
+}
+
+.playlist-import-header p {
+    color: var(--text-secondary);
+    max-width: 760px;
+}
+
+.playlist-import-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 420px) 1fr;
+    gap: 18px;
+    align-items: start;
+}
+
+.playlist-source-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.playlist-source-panel > label {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.playlist-source-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.playlist-source-controls input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--card-bg);
+    color: var(--text-primary);
+}
+
+.playlist-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.playlist-actions .btn {
+    padding: 10px 14px;
+    font-size: 0.78rem;
+    border-radius: 18px;
+}
+
+.playlist-summary {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--card-bg);
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--text-secondary);
+}
+
+.playlist-summary strong {
+    color: var(--text-primary);
+}
+
+.playlist-summary-art {
+    width: 82px;
+    height: 82px;
+    flex: 0 0 82px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.playlist-summary-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.playlist-summary-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.playlist-summary-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.playlist-summary-meta span {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 0.82rem;
+    text-transform: capitalize;
+}
+
+.playlist-preview {
+    margin-top: 18px;
+}
+
+.playlist-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.playlist-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 880px;
+    background: var(--card-bg);
+}
+
+.playlist-table th,
+.playlist-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    font-size: 0.88rem;
+    vertical-align: middle;
+}
+
+.playlist-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.playlist-table th:first-child,
+.playlist-table td:first-child {
+    width: 72px;
+    min-width: 72px;
+}
+
+.playlist-toggle-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.playlist-toggle-all input,
+.playlist-track-check {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary-color);
+    cursor: pointer;
+}
+
+.playlist-toggle-all span {
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0;
+}
+
+.playlist-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.playlist-match-status {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 999px;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.08);
+    white-space: nowrap;
+}
+
+.playlist-match-matched {
+    color: var(--success-color);
+    background: rgba(29, 185, 84, 0.15);
+}
+
+.playlist-match-low_confidence {
+    color: #f7931e;
+    background: rgba(247, 147, 30, 0.15);
+}
+
+.playlist-match-unmatched,
+.playlist-match-error {
+    color: var(--error-color);
+    background: rgba(226, 33, 52, 0.12);
+}
+
+@media (max-width: 860px) {
+    .playlist-import-grid {
+        grid-template-columns: 1fr;
+    }
+}

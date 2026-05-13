@@ -44,6 +44,10 @@ Edit `backend/.env` file with your settings:
 ```env
 # DEFAULT_METADATA_PROVIDER=deezer
 # Optional Spotify: SPOTIFY_CLIENT_ID= SPOTIFY_CLIENT_SECRET=
+# Playlist imports:
+# DEFAULT_PLAYLIST_MATCH_PROVIDER=deezer
+# PLAYLIST_IMPORT_LIMIT=250
+# LASTFM_API_KEY=  # Required only for Last.fm imports
 
 # Navidrome Configuration
 NAVIDROME_MUSIC_PATH=/music  # Inside container, don't change
@@ -200,4 +204,3 @@ For production:
          cpus: '2'
          memory: 2G
    ```
-

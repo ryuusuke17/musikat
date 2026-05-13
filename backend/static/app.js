@@ -214,7 +214,7 @@ async function loadDownloadLocations() {
     }
 }
 
-// Search type: 'tracks' or 'albums'
+// Search type: 'tracks', 'albums', or 'import'
 let searchType = 'tracks';
 
 // Format and quality options (loaded on page init)
@@ -352,24 +352,31 @@ searchInput.addEventListener('keypress', (e) => {
     }
 });
 
-// Search type toggle
-document.getElementById('searchTracks')?.addEventListener('click', () => {
-    searchType = 'tracks';
-    document.getElementById('searchTracks').classList.add('active');
-    document.getElementById('searchAlbums').classList.remove('active');
-    // Re-search if there's a query
-    if (searchInput.value.trim()) handleSearch();
-});
+function setSearchType(type) {
+    searchType = type;
+    document.getElementById('searchTracks')?.classList.toggle('active', type === 'tracks');
+    document.getElementById('searchAlbums')?.classList.toggle('active', type === 'albums');
+    document.getElementById('searchImport')?.classList.toggle('active', type === 'import');
+    document.getElementById('playlistImportSection')?.classList.toggle('hidden', type !== 'import');
+    if (type === 'import') {
+        hideResults();
+        hideReverseResults();
+        hideLoading();
+        hideError();
+    } else if (searchInput.value.trim()) {
+        handleSearch();
+    }
+}
 
-document.getElementById('searchAlbums')?.addEventListener('click', () => {
-    searchType = 'albums';
-    document.getElementById('searchAlbums').classList.add('active');
-    document.getElementById('searchTracks').classList.remove('active');
-    // Re-search if there's a query
-    if (searchInput.value.trim()) handleSearch();
-});
+// Search type toggle
+document.getElementById('searchTracks')?.addEventListener('click', () => setSearchType('tracks'));
+document.getElementById('searchAlbums')?.addEventListener('click', () => setSearchType('albums'));
+document.getElementById('searchImport')?.addEventListener('click', () => setSearchType('import'));
 
 async function handleSearch() {
+    if (searchType === 'import') {
+        setSearchType('tracks');
+    }
     const query = searchInput.value.trim();
     
     if (!query) {
@@ -949,7 +956,7 @@ async function fetchLocalTrackFileOnce(trackId, downloadUrl, filePath) {
             return false;
         }
         const blob = await r.blob();
-        const fname = (filePath && filePath.split('/').pop()) || 'download.mp3';
+        const fname = (filePath && filePath.split(/[\\/]/).pop()) || 'download.mp3';
         const objUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = objUrl;
@@ -1048,6 +1055,9 @@ function pollDownloadStatus(trackId, track) {
                             attachRetryButton(trackId, track);
                         }
                     } else {
+                        if (status.file_path) {
+                            updateStatusItem(trackId, 'completed', 'Saved to Downloads folder', 100);
+                        }
                         updateTrackToDownloaded(trackId);
                     }
 
@@ -1205,6 +1215,16 @@ function formatDuration(ms) {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+function formatPlaylistRuntime(ms) {
+    const totalMinutes = Math.round(Number(ms || 0) / 60000);
+    if (!totalMinutes) return 'Runtime unavailable';
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours && minutes) return `${hours} hr ${minutes} min`;
+    if (hours) return `${hours} hr`;
+    return `${minutes} min`;
 }
 
 function showLoading() {
@@ -1401,3 +1421,376 @@ document.getElementById('albumModal')?.addEventListener('click', (e) => {
     if (e.target.id === 'albumModal') hideAlbumModal();
 });
 
+// ============ PLAYLIST IMPORT ============
+
+let playlistImportState = {
+    playlist: null,
+    tracks: [],
+    selected: new Set(),
+};
+
+function initPlaylistImport() {
+    const source = document.getElementById('playlistSource');
+    if (!source) return;
+    source.addEventListener('change', updatePlaylistSourceControls);
+    document.getElementById('playlistPreviewBtn')?.addEventListener('click', previewPlaylistImport);
+    document.getElementById('playlistMatchBtn')?.addEventListener('click', matchPlaylistImport);
+    document.getElementById('playlistDeselectUnmatchedBtn')?.addEventListener('click', deselectUnmatchedPlaylistTracks);
+    document.getElementById('playlistQueueBtn')?.addEventListener('click', queueSelectedPlaylistTracks);
+    document.getElementById('playlistDownloadBtn')?.addEventListener('click', queueSelectedPlaylistTracks);
+    document.getElementById('playlistBulkDownloadBtn')?.addEventListener('click', queueAllMatchedPlaylistTracks);
+    document.getElementById('playlistClearBtn')?.addEventListener('click', clearPlaylistImport);
+    document.getElementById('playlistLoadUserOptionsBtn')?.addEventListener('click', loadListenBrainzOptions);
+    document.getElementById('playlistUsername')?.addEventListener('change', () => {
+        if (document.getElementById('playlistSource')?.value === 'listenbrainz') {
+            loadListenBrainzOptions();
+        }
+    });
+    updatePlaylistSourceControls();
+}
+
+function updatePlaylistSourceControls() {
+    const source = document.getElementById('playlistSource')?.value || 'csv';
+    const fileControls = document.getElementById('playlistFileControls');
+    const urlControls = document.getElementById('playlistUrlControls');
+    const userControls = document.getElementById('playlistUserControls');
+    const loadUserOptionsBtn = document.getElementById('playlistLoadUserOptionsBtn');
+    const file = document.getElementById('playlistFile');
+    const importType = document.getElementById('playlistImportType');
+    fileControls?.classList.toggle('hidden', source !== 'csv' && source !== 'm3u');
+    urlControls?.classList.toggle('hidden', source !== 'spotify' && source !== 'deezer');
+    userControls?.classList.toggle('hidden', source !== 'lastfm' && source !== 'listenbrainz');
+    loadUserOptionsBtn?.classList.toggle('hidden', source !== 'listenbrainz');
+    if (file) file.accept = source === 'm3u' ? '.m3u,.m3u8' : '.csv';
+    if (importType) {
+        if (source === 'lastfm') {
+            importType.innerHTML = '<option value="loved">Loved tracks</option><option value="top">Top tracks</option><option value="recent">Recent tracks</option>';
+        } else if (source === 'listenbrainz') {
+            importType.innerHTML = '<option value="recent">Recent listens</option><option value="loved">Loved / feedback tracks</option>';
+        } else {
+            importType.innerHTML = '';
+        }
+    }
+}
+
+async function loadListenBrainzOptions() {
+    const username = document.getElementById('playlistUsername')?.value.trim();
+    const importType = document.getElementById('playlistImportType');
+    if (!username) {
+        setPlaylistError('Enter a ListenBrainz username first');
+        return;
+    }
+    if (!importType) return;
+    setPlaylistError('');
+    try {
+        const response = await fetch(resolveAppUrl(`api/playlists/import/listenbrainz/options?username=${encodeURIComponent(username)}`));
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || 'Could not load ListenBrainz options');
+        }
+        const data = await response.json();
+        importType.innerHTML = (data.options || []).map((opt) => {
+            const count = opt.track_count ? ` (${opt.track_count})` : '';
+            return `<option value="${optionEscape(opt.value)}">${escapeHtml(opt.label)}${count}</option>`;
+        }).join('');
+    } catch (err) {
+        setPlaylistError(err.message || String(err));
+    }
+}
+
+function setPlaylistError(message) {
+    const el = document.getElementById('playlistImportError');
+    if (!el) return;
+    el.textContent = message || '';
+    el.classList.toggle('hidden', !message);
+}
+
+function optionEscape(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function playlistApiOptions() {
+    return `provider=${encodeURIComponent(getMetadataProvider())}`;
+}
+
+async function previewPlaylistImport() {
+    const source = document.getElementById('playlistSource')?.value || 'csv';
+    setPlaylistError('');
+    try {
+        let response;
+        if (source === 'csv' || source === 'm3u') {
+            const fileInput = document.getElementById('playlistFile');
+            const file = fileInput && fileInput.files && fileInput.files[0];
+            if (!file) throw new Error('Choose a playlist file first');
+            const form = new FormData();
+            form.append('file', file);
+            response = await fetch(resolveAppUrl(`api/playlists/import/${source}?${playlistApiOptions()}`), {
+                method: 'POST',
+                body: form,
+            });
+        } else if (source === 'spotify' || source === 'deezer') {
+            const url = document.getElementById('playlistUrl')?.value.trim();
+            if (!url) throw new Error('Enter a playlist URL first');
+            response = await fetch(resolveAppUrl(`api/playlists/import/${source}`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, provider: getMetadataProvider() }),
+            });
+        } else {
+            const username = document.getElementById('playlistUsername')?.value.trim();
+            const importType = document.getElementById('playlistImportType')?.value;
+            if (!username) throw new Error('Enter a username first');
+            response = await fetch(resolveAppUrl(`api/playlists/import/${source}`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, import_type: importType, provider: getMetadataProvider() }),
+            });
+        }
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || 'Playlist import failed');
+        }
+        const data = await response.json();
+        playlistImportState.playlist = data.playlist || null;
+        playlistImportState.tracks = data.tracks || [];
+        playlistImportState.selected = new Set(playlistImportState.tracks.map(t => t.import_id));
+        renderPlaylistImport();
+    } catch (err) {
+        setPlaylistError(err.message || String(err));
+    }
+}
+
+async function matchPlaylistImport() {
+    if (!playlistImportState.tracks.length) return;
+    setPlaylistError('');
+    try {
+        const response = await fetch(resolveAppUrl('api/playlists/match'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tracks: playlistImportState.tracks, provider: getMetadataProvider() }),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || 'Matching failed');
+        }
+        const data = await response.json();
+        playlistImportState.tracks = data.tracks || [];
+        renderPlaylistImport();
+    } catch (err) {
+        setPlaylistError(err.message || String(err));
+    }
+}
+
+function clearPlaylistImport() {
+    playlistImportState = { playlist: null, tracks: [], selected: new Set() };
+    document.getElementById('playlistPreview')?.classList.add('hidden');
+    document.getElementById('playlistSummary')?.classList.add('hidden');
+    ['playlistMatchBtn', 'playlistDeselectUnmatchedBtn', 'playlistQueueBtn', 'playlistDownloadBtn', 'playlistBulkDownloadBtn', 'playlistClearBtn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = true;
+    });
+    setPlaylistError('');
+}
+
+function selectedPlaylistTracks() {
+    return playlistImportState.tracks.filter(t => playlistImportState.selected.has(t.import_id));
+}
+
+function isMatchedPlaylistTrack(track) {
+    return Boolean(track && track.matched_track && track.matched_track.id);
+}
+
+function deselectUnmatchedPlaylistTracks() {
+    playlistImportState.selected = new Set(
+        playlistImportState.tracks
+            .filter(isMatchedPlaylistTrack)
+            .map(t => t.import_id)
+    );
+    renderPlaylistImport();
+}
+
+function renderPlaylistImport() {
+    const preview = document.getElementById('playlistPreview');
+    const summary = document.getElementById('playlistSummary');
+    if (!preview || !summary) return;
+    const playlist = playlistImportState.playlist || {};
+    summary.innerHTML = `
+        <strong>${escapeHtml(playlist.name || 'Imported playlist')}</strong>
+        <span>${escapeHtml(playlist.source || '')} â€¢ ${playlistImportState.tracks.length} tracks</span>
+    `;
+    const richSources = new Set(['lastfm', 'deezer', 'spotify', 'spotify_web', 'listenbrainz']);
+    const source = playlist.source || '';
+    const totalTracks = Number(playlist.track_count || playlistImportState.tracks.length);
+    const importedTracks = Number(playlist.imported_track_count || playlistImportState.tracks.length);
+    const trackLabel = totalTracks && importedTracks !== totalTracks
+        ? `${importedTracks} of ${totalTracks} tracks`
+        : `${totalTracks || playlistImportState.tracks.length} tracks`;
+    if (richSources.has(source)) {
+        const coverArt = playlist.cover_art || '';
+        const artMarkup = coverArt
+            ? `<img class="playlist-summary-art" src="${escapeHtml(coverArt)}" alt="${escapeHtml(playlist.name || 'Playlist')} cover">`
+            : `<div class="playlist-summary-art playlist-summary-placeholder" aria-label="No playlist artwork">No art</div>`;
+        summary.innerHTML = `
+            ${artMarkup}
+            <div class="playlist-summary-copy">
+                <strong>${escapeHtml(playlist.name || 'Imported playlist')}</strong>
+                <div class="playlist-summary-meta">
+                    <span>${escapeHtml(source.replace('_', ' '))}</span>
+                    <span>${escapeHtml(trackLabel)}</span>
+                    <span>${escapeHtml(formatPlaylistRuntime(playlist.duration_ms))}</span>
+                </div>
+            </div>
+        `;
+    } else {
+        summary.innerHTML = `
+            <strong>${escapeHtml(playlist.name || 'Imported playlist')}</strong>
+            <span>${escapeHtml(source)} • ${escapeHtml(trackLabel)}</span>
+        `;
+    }
+    summary.classList.remove('hidden');
+    const rows = playlistImportState.tracks.map((track) => {
+        const checked = playlistImportState.selected.has(track.import_id) ? 'checked' : '';
+        const matched = track.matched_track || {};
+        const status = track.match_status || 'not matched';
+        const confidence = track.confidence != null ? `${Math.round(Number(track.confidence || 0) * 100)}%` : '';
+        return `
+            <tr>
+                <td><input type="checkbox" class="playlist-track-check" data-import-id="${escapeHtml(track.import_id)}" ${checked}></td>
+                <td>${escapeHtml(track.title)}</td>
+                <td>${escapeHtml(track.artist)}</td>
+                <td>${escapeHtml(track.album)}</td>
+                <td>${escapeHtml(track.source)}</td>
+                <td><span class="playlist-match-status playlist-match-${escapeHtml(status)}">${escapeHtml(status)}</span></td>
+                <td>${escapeHtml(confidence)}</td>
+                <td>${matched.id ? `${escapeHtml(matched.name)} - ${escapeHtml(matched.artist)}` : ''}</td>
+            </tr>
+        `;
+    }).join('');
+    preview.innerHTML = `
+        <div class="playlist-table-wrap">
+            <table class="playlist-table">
+                <thead>
+                    <tr>
+                        <th>
+                            <label class="playlist-toggle-all">
+                                <input type="checkbox" id="playlistToggleAll" aria-label="Select or deselect all imported tracks">
+                                <span>All</span>
+                            </label>
+                        </th><th>Track title</th><th>Artist</th><th>Album</th><th>Source</th><th>Match status</th><th>Confidence</th><th>Matched provider result</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+    preview.classList.remove('hidden');
+    const toggleAll = preview.querySelector('#playlistToggleAll');
+    if (toggleAll) {
+        const toggleAllLabel = preview.querySelector('.playlist-toggle-all span');
+        toggleAll.checked = playlistImportState.tracks.length > 0 && playlistImportState.selected.size === playlistImportState.tracks.length;
+        toggleAll.indeterminate = playlistImportState.selected.size > 0 && playlistImportState.selected.size < playlistImportState.tracks.length;
+        if (toggleAllLabel) {
+            toggleAllLabel.textContent = toggleAll.checked ? 'None' : 'All';
+        }
+        toggleAll.addEventListener('change', () => {
+            playlistImportState.selected = toggleAll.checked
+                ? new Set(playlistImportState.tracks.map(t => t.import_id))
+                : new Set();
+            renderPlaylistImport();
+        });
+    }
+    preview.querySelectorAll('.playlist-track-check').forEach((box) => {
+        box.addEventListener('change', () => {
+            if (box.checked) {
+                playlistImportState.selected.add(box.dataset.importId);
+            } else {
+                playlistImportState.selected.delete(box.dataset.importId);
+            }
+            updatePlaylistButtons();
+        });
+    });
+    updatePlaylistButtons();
+}
+
+function updatePlaylistButtons() {
+    const hasTracks = playlistImportState.tracks.length > 0;
+    const selected = selectedPlaylistTracks();
+    const hasMatchedSelected = selected.some(isMatchedPlaylistTrack);
+    const hasAnyMatched = playlistImportState.tracks.some(isMatchedPlaylistTrack);
+    const setDisabled = (id, disabled) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    };
+    setDisabled('playlistMatchBtn', !hasTracks);
+    setDisabled('playlistDeselectUnmatchedBtn', !hasAnyMatched);
+    setDisabled('playlistQueueBtn', !hasMatchedSelected);
+    setDisabled('playlistDownloadBtn', !hasMatchedSelected);
+    setDisabled('playlistBulkDownloadBtn', !hasAnyMatched);
+    setDisabled('playlistClearBtn', !hasTracks);
+}
+
+async function queueSelectedPlaylistTracks() {
+    const tracks = selectedPlaylistTracks().filter(isMatchedPlaylistTrack);
+    await queuePlaylistTracks(tracks);
+}
+
+async function queueAllMatchedPlaylistTracks() {
+    const tracks = playlistImportState.tracks.filter(isMatchedPlaylistTrack);
+    playlistImportState.selected = new Set(tracks.map(t => t.import_id));
+    renderPlaylistImport();
+    await queuePlaylistTracks(tracks);
+}
+
+async function queuePlaylistTracks(tracks) {
+    if (!tracks.length) {
+        setPlaylistError('Match and select at least one track first');
+        return;
+    }
+    const place = getDownloadLocationPlace();
+    const formatSelect = document.getElementById('audioFormat');
+    const qualitySelect = document.getElementById('audioQuality');
+    const format = (formatSelect && formatSelect.value) ? formatSelect.value : defaultFormat;
+    const quality = (qualitySelect && qualitySelect.value) ? qualitySelect.value : defaultQuality;
+    try {
+        const response = await fetch(resolveAppUrl('api/playlists/queue'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tracks,
+                location: place.location,
+                format,
+                quality,
+                provider: getMetadataProvider(),
+                max_retries: getDownloadMaxRetries(),
+                ...navidromeLibraryField(place),
+            }),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || 'Could not queue playlist tracks');
+        }
+        const result = await response.json();
+        showDownloadStatus();
+        (result.queued_tracks || []).forEach((track) => {
+            pendingRetryByTrackId.set(track.id, { track, videoId: null });
+            activeDownloads.set(track.id, { status: 'queued', progress: 0, track });
+            addStatusItem(track.id, track, 'queued', 'Playlist import queued', 0);
+            pollDownloadStatus(track.id, track);
+        });
+        if (result.skipped_count) {
+            setPlaylistError(`${result.queued_count} queued, ${result.skipped_count} skipped`);
+        }
+    } catch (err) {
+        setPlaylistError(err.message || String(err));
+    }
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPlaylistImport);
+} else {
+    initPlaylistImport();
+}

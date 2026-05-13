@@ -15,6 +15,7 @@ Choose the catalog in the web UI (**Catalog**) or set `DEFAULT_METADATA_PROVIDER
 ## Features
 
 - Search **Deezer** or **Spotify** for tracks and albums
+- Import playlists from **CSV**, **M3U/M3U8**, **Spotify**, **Deezer**, **Last.fm**, and **ListenBrainz** with preview, matching, and selected-track queueing
 - Download from YouTube using catalog metadata; optional **YouTube cookies** when YouTube blocks automation
 - ID3 tagging (artist, album, cover art) via the metadata service
 - **Download to:** local (browser) **or** any **configured Navidrome music root** (multiple libraries supported — no need to run separate app instances)
@@ -83,6 +84,16 @@ Copy `backend/env.example` to `backend/.env` and adjust.
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Required if you use Spotify in the UI |
 | `SPOTIFY_REDIRECT_URI` | OAuth redirect (default `http://localhost:8000/callback`) |
 
+### Playlist import
+
+| Variable | Description |
+|----------|-------------|
+| `DEFAULT_PLAYLIST_MATCH_PROVIDER` | `deezer` or `spotify`; used when matching imported playlist rows |
+| `PLAYLIST_IMPORT_LIMIT` | Maximum tracks parsed/imported from a playlist preview (default `250`) |
+| `LASTFM_API_KEY` | Required for Last.fm loved/top/recent track imports |
+
+Spotify playlist imports use the same `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` credentials as Spotify catalog search. Deezer and ListenBrainz imports use public APIs.
+
 ### Navidrome — one or multiple library folders
 
 The app writes files **on disk** under paths the server is allowed to use. Navidrome should use the same folder(s) as its music library.
@@ -120,6 +131,7 @@ NAVIDROME_MUSIC_LABELS=Rock,Classical
 | `DOWNLOAD_DIR` | Server temp/staging for downloads (default `./downloads`) |
 | `OUTPUT_FORMAT` / `AUDIO_QUALITY` | Default encode settings |
 | `YOUTUBE_COOKIES_PATH` | Netscape cookies file for yt-dlp when YouTube blocks requests |
+| `FFMPEG_LOCATION` | Optional ffmpeg executable or bin directory; if unset, Musikat uses bundled `imageio-ffmpeg` when available |
 | `API_HOST` / `API_PORT` | Bind address |
 | `CORS_ORIGINS` | Comma-separated allowed origins |
 
@@ -138,7 +150,8 @@ Or `python app.py` if your entrypoint wraps uvicorn. The UI is served from the s
 2. Under **Download to**, choose **My Downloads Folder (System)** or a **Navidrome** path (loaded from `GET /api/navidrome/libraries` / your env).
 3. Pick **Catalog** (Deezer or Spotify).
 4. Search tracks or albums, then download. Watch the queue for progress.
-5. **Local:** the browser saves the finished file. **Navidrome:** the server copies the file under the selected music root (Artist/Album layout).
+5. To import a playlist, use **Import Playlist**, preview the source tracks, click **Match tracks**, select the rows you want, then queue or download them.
+6. **Local:** the browser saves the finished file. **Navidrome:** the server copies the file under the selected music root (Artist/Album layout).
 
 ## How it works
 
@@ -161,6 +174,14 @@ Or `python app.py` if your entrypoint wraps uvicorn. The UI is served from the s
 | POST | `/api/download` | Body includes `track_id`, `location` (`local` \| `navidrome`), optional `navidrome_library` (absolute path; must match server config), `provider`, format/quality |
 | POST | `/api/download/album` | Album download; same `location` / `navidrome_library` pattern |
 | POST | `/api/reverse/download` | YouTube → metadata flow |
+| POST | `/api/playlists/import/csv` | CSV upload preview |
+| POST | `/api/playlists/import/m3u` | M3U/M3U8 upload preview |
+| POST | `/api/playlists/import/spotify` | Spotify playlist URL import |
+| POST | `/api/playlists/import/deezer` | Deezer playlist URL import |
+| POST | `/api/playlists/import/lastfm` | Last.fm loved/top/recent import |
+| POST | `/api/playlists/import/listenbrainz` | ListenBrainz loved/recent/playlists import |
+| POST | `/api/playlists/match` | Match imported rows with the selected catalog |
+| POST | `/api/playlists/queue` | Queue selected matched playlist tracks for download |
 | GET | `/api/track/{id}/exists` | Duplicate check; supports `location` and optional `navidrome_library` |
 | GET | `/api/download/status/{track_id}` | Job status |
 

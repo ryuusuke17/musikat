@@ -15,6 +15,19 @@ SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:8000/callback")
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# Playlist import
+_raw_playlist_provider = os.getenv("DEFAULT_PLAYLIST_MATCH_PROVIDER", DEFAULT_METADATA_PROVIDER).lower().strip()
+DEFAULT_PLAYLIST_MATCH_PROVIDER = _raw_playlist_provider if _raw_playlist_provider in ("deezer", "spotify") else DEFAULT_METADATA_PROVIDER
+PLAYLIST_IMPORT_LIMIT = max(1, min(_int_env("PLAYLIST_IMPORT_LIMIT", 250), 1000))
+LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")
+
 # Navidrome Configuration
 # Multiple libraries: set NAVIDROME_MUSIC_PATHS to a comma- or newline-separated list of absolute paths.
 # Optional NAVIDROME_MUSIC_LABELS: same order, comma/newline-separated labels (defaults to folder basename).
@@ -85,6 +98,7 @@ TEMP_FILE_CLEANUP_DELAY_SEC = int(os.getenv("TEMP_FILE_CLEANUP_DELAY_SEC", "60")
 
 # YouTube Configuration
 YOUTUBE_COOKIES_PATH = os.getenv("YOUTUBE_COOKIES_PATH", "")  # Path to YouTube cookies file (Netscape format) for yt-dlp
+FFMPEG_LOCATION = os.getenv("FFMPEG_LOCATION", "")  # Optional ffmpeg executable or bin directory for yt-dlp
 
 # API Configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
@@ -95,4 +109,3 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1
 Path(DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 for _nav_root in NAVIDROME_MUSIC_PATHS_LIST:
     Path(_nav_root).mkdir(parents=True, exist_ok=True)
-

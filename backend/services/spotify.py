@@ -54,7 +54,7 @@ class SpotifyService:
     def search_tracks(self, query: str, limit: int = 20) -> List[Dict]:
         """Search for tracks on Spotify"""
         try:
-            results = self._call(self.client.search, q=query, type='track', limit=min(limit, 50))
+            results = self._call(self.client.search, q=query, type='track', limit=limit, market='MX')
             tracks = []
             for item in results["tracks"]["items"]:
                 tracks.append({
@@ -101,7 +101,7 @@ class SpotifyService:
     def search_albums(self, query: str, limit: int = 20) -> List[Dict]:
         """Search for albums on Spotify"""
         try:
-            results = self._call(self.client.search, q=query, type='album', limit=min(limit, 50))
+            results = self._call(self.client.search, q=query, type='album', limit=limit, market='MX')
             albums = []
             for item in results["albums"]["items"]:
                 albums.append({

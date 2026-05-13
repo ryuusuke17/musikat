@@ -23,11 +23,24 @@ class YouTubeService:
         self.output_format = config.OUTPUT_FORMAT
         self.audio_quality = config.AUDIO_QUALITY
         self.cookies_path = config.YOUTUBE_COOKIES_PATH
+        self.ffmpeg_location = self._resolve_ffmpeg_location()
         try:
             self.ytmusic = YTMusic()
         except Exception as e:
             print(f"Failed to initialize YTMusic: {e}")
             self.ytmusic = None
+
+    @staticmethod
+    def _resolve_ffmpeg_location() -> str:
+        configured = (getattr(config, "FFMPEG_LOCATION", "") or "").strip()
+        if configured:
+            return configured
+        try:
+            import imageio_ffmpeg
+
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return ""
 
     @staticmethod
     def _preferred_quality_for_extract(output_format: str, audio_quality: str) -> str:
@@ -160,6 +173,12 @@ class YouTubeService:
             print(f"Using YouTube cookies from: {self.cookies_path}")
         elif self.cookies_path:
             print(f"Warning: Cookie file specified but not found: {self.cookies_path}")
+        return ydl_opts
+
+    def _finalize_ydl_opts(self, ydl_opts: Dict) -> Dict:
+        ydl_opts = self._add_cookies_to_opts(ydl_opts)
+        if self.ffmpeg_location:
+            ydl_opts["ffmpeg_location"] = self.ffmpeg_location
         return ydl_opts
     
     def calculate_similarity(self, str1: str, str2: str) -> float:
@@ -432,7 +451,7 @@ class YouTubeService:
                 'default_search': f'ytsearch{num_results}',
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             }
-            ydl_opts = self._add_cookies_to_opts(ydl_opts)
+            ydl_opts = self._finalize_ydl_opts(ydl_opts)
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -579,7 +598,7 @@ class YouTubeService:
                     ]
                 }
 
-        ydl_opts = self._add_cookies_to_opts(ydl_opts)
+        ydl_opts = self._finalize_ydl_opts(ydl_opts)
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -708,7 +727,7 @@ class YouTubeService:
                     ]
                 }
 
-        ydl_opts = self._add_cookies_to_opts(ydl_opts)
+        ydl_opts = self._finalize_ydl_opts(ydl_opts)
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -800,7 +819,7 @@ class YouTubeService:
                 }
             },
         }
-        ydl_opts = self._add_cookies_to_opts(ydl_opts)
+        ydl_opts = self._finalize_ydl_opts(ydl_opts)
 
         # Build a canonical URL if a bare ID was provided
         url = url_or_id
@@ -833,4 +852,3 @@ class YouTubeService:
                 'success': False,
                 'error': str(e),
             }
-
